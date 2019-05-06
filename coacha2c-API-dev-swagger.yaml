@@ -1,0 +1,39 @@
+---
+swagger: "2.0"
+info:
+  version: "2019-04-25T16:54:51Z"
+  title: "coacha2c-API"
+host: "peq6yfpt98.execute-api.us-east-1.amazonaws.com"
+basePath: "/dev"
+schemes:
+- "https"
+paths:
+  /:
+    get:
+      produces:
+      - "application/json"
+      parameters:
+      - name: "athlete"
+        in: "query"
+        required: false
+        type: "string"
+      - name: "Authorization"
+        in: "header"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "200 response"
+          headers:
+            Authorization:
+              type: "string"
+            Content-type:
+              type: "string"
+      security:
+      - a2c_cognito: []
+securityDefinitions:
+  a2c_cognito:
+    type: "apiKey"
+    name: "Authorization"
+    in: "header"
+    x-amazon-apigateway-authtype: "cognito_user_pools"

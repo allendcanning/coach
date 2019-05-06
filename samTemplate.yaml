@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Athletes to College Portal
+Globals:
+  Function:
+    Runtime: python3.7
+    Timeout: 30
+Resources:
+  coachApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Auth:
+        DefaultAuthorizer: a2cCognitoAuthorizer
+        Authorizers:
+          a2cCognitoAuthorizer:
+            UserPoolArn: arn:aws:cognito-idp:us-east-1:530317771161:userpool/us-east-1_DOD7SyKZu
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "2019-04-25T16:54:51Z"
+          title: "coacha2c-API"
+        host: "peq6yfpt98.execute-api.us-east-1.amazonaws.com"
+        basePath: "/dev"
+        schemes:
+        - "https"
+        paths:
+          /:
+            get:
+              produces:
+              - "application/json"
+              parameters:
+              - name: "athlete"
+                in: "query"
+                required: false
+                type: "string"
+              - name: "Authorization"
+                in: "header"
+                required: false
+                type: "string"
+              responses:
+                '200':
+                  description: "200 response"
+                  headers:
+                    Authorization:
+                      type: "string"
+                    Content-type:
+                      type: "string"
+              security:
+              - a2c_cognito: []
+              x-amazon-apigateway-integration:
+                uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:530317771161:function:coach-a2c/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+        securityDefinitions:
+          a2c_cognito:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "cognito_user_pools"
+            x-amazon-apigateway-authorizer:
+              providerARNs:
+                - arn:aws:cognito-idp:us-east-1:530317771161:userpool/us-east-1_DOD7SyKZu
+              type: "cognito_user_pools"
+  loginApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "2019-04-25T13:07:39Z"
+          title: "login-coach-API"
+        host: "devportal.thefirmu.org"
+        basePath: "/dev"
+        schemes:
+        - "https"
+        paths:
+          /:
+            get:
+              produces:
+              - "application/json"
+              parameters:
+              - name: "Authorization"
+                in: "header"
+                required: false
+                type: "string"
+              responses:
+                '200':
+                  description: "200 response"
+                  headers:
+                    Authorization:
+                      type: "string"
+                    Content-type:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:530317771161:function:login-coach/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+            post:
+              produces:
+              - "application/json"
+              parameters:
+              - name: "Authorization"
+                in: "header"
+                required: false
+                type: "string"
+              responses:
+                '200':
+                  description: "200 response"
+                  headers:
+                    Authorization:
+                      type: "string"
+                    Content-Type:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:530317771161:function:login-coach/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+  displayCoachFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: coach_function.lambda_handler
+      CodeUri: ./
+      Events:
+        displayCoachApi:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+            RestApiId: !Ref coachApi
+  loginCoachFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: login_function.lambda_handler
+      CodeUri: ./login/function.zip
+      Events:
+        formPortalApi:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+            RestApiId: !Ref loginApi
+        loginPortalApi:
+          Type: Api
+          Properties:
+            Path: /
+            Method: post
+            RestApiId: !Ref loginApi
