@@ -145,21 +145,6 @@ def print_form():
 
   return content
 
-def set_portal_data(config,token,record):
-  headers = { 'Authorization': token }
-
-  data = ""
-  for item in record:
-    data += item+'='+record[item]+'&'
-
-  data = data.rstrip('&')
-
-  r = requests.post(config['content_url'],headers=headers,data=data)
-
-  body = r.text
-
-  return body
-
 def get_account_type(environment,username):
   user_record = {}
 
@@ -192,21 +177,6 @@ def get_coach_view(config,token,athlete):
 
   return body
 
-def get_portal_data(config,token,action):
-  headers = { 'Authorization': token }
-
-  if action != False:
-    log_error("Calling POST with "+action)
-    data = "action="+action
-    r = requests.post(config['content_url'],headers=headers,data=data)
-  else:
-    log_error("Calling GET")
-    r = requests.get(config['content_url'],headers=headers)
-
-  body = r.text
-
-  return body
-
 def lambda_handler(event, context):
   token = 'False'
   record = {}
@@ -223,9 +193,9 @@ def lambda_handler(event, context):
   
   # Build HTML content
   css = '<link rel="stylesheet" href="https://s3.amazonaws.com/'+config['s3_html_bucket']+'/css/a2c.css" type="text/css" />'
-  content = "<html><head><title>A2C Portal</title>\n"
+  content = "<html><head><title>A2C Coach Portal</title>\n"
   content += css+'</head>'
-  content += "<body><h3>A2C Portal</h3>"
+  content += "<body><h3>A2C Coach Portal</h3>"
 
   # Get jwt token
   if 'headers' in event:
@@ -265,38 +235,25 @@ def lambda_handler(event, context):
             auth['PASSWORD'] = unquote_plus(value)
           else: 
             record[key] = unquote_plus(value)
-      else:
-        log_error('Parsing single post param: '+postparams)
-        key = postparams.split('=')[0]
-        value = postparams.split('=')[1]
-        record[key] = value
         
       if 'USERNAME' in auth:
         token = authenticate_user(config,auth)
         username = auth['USERNAME']
         
-      if 'action' in record:
-        action = record['action']
-
       log_error('Got token = '+token)
       if token != 'False':
-        if action == 'Process':
-          log_error("Setting portal data")
-          content += set_portal_data(config,token,record)
-        else:
-          log_error("Getting portal data")
-          content += get_portal_data(config,token,action)
+        content += get_coach_view(config,token,athlete)
       else:
         content += print_form()
     else:
       # there are no post parameters
       if token != 'False':
-         content += get_portal_data(config,token,action)
+        content += get_coach_view(config,token,athlete)
       else:
         content += print_form()
   else:
     if token != 'False':
-      content += get_portal_data(config,token,action) 
+      content += get_coach_view(config,token,athlete)
     else:
       content += print_form()
 
