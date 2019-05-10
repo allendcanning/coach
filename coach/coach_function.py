@@ -1,6 +1,8 @@
 import json
 import os, time
 import re
+import hmac
+import hashlib
 import base64
 import boto3
 from jose import jwk, jwt
@@ -25,6 +27,36 @@ t = dynamodb.Table(table_name)
 
 def log_error(msg):
   print(msg)
+
+def get_config_data(environment):
+  client = boto3.client('ssm')
+  config = {}
+
+  ssmpath="/a2c/"+environment+"/s3_html_bucket"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['s3_html_bucket'] = response['Parameter']['Value']
+  
+  ssmpath="/a2c/"+environment+"/cognito_pool"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['cognito_pool'] =response['Parameter']['Value'] 
+
+  ssmpath="/a2c/"+environment+"/cognito_client_id"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['cognito_client_id'] =response['Parameter']['Value'] 
+
+  ssmpath="/a2c/"+environment+"/cognito_client_secret_hash"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['cognito_client_secret_hash'] =response['Parameter']['Value'] 
+
+  ssmpath="/a2c/"+environment+"/content_url"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['content_url'] =response['Parameter']['Value'] 
+
+  ssmpath="/a2c/"+environment+"/coach_url"
+  response = client.get_parameter(Name=ssmpath,WithDecryption=False)
+  config['coach_url'] =response['Parameter']['Value'] 
+
+  return config
 
 def get_student_data(athlete):
   user_record = {}
