@@ -3,9 +3,12 @@ import os, time
 import re
 import base64
 import boto3
+from jose import jwk, jwt
+from jose.utils import base64url_decode
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-from urllib.parse import unquote_plus
+import urllib.parse
+from urllib.request import urlopen
 
 # Set timezone
 os.environ['TZ'] = 'US/Eastern'
@@ -15,7 +18,7 @@ time.tzset()
 dynamodb = boto3.resource('dynamodb')
 
 # This information needs to move to paramater store
-table_name = "user_info"
+table_name = "coach_info"
 
 # Connect to dynamo db table
 t = dynamodb.Table(table_name)
@@ -234,37 +237,202 @@ def display_student_info(record):
 
   return user_record
 
+def start_html(config):
+  # Build HTML content
+  css = '<link rel="stylesheet" href="https://s3.amazonaws.com/'+config['s3_html_bucket']+'/css/a2c.css" type="text/css" />'
+  content = "<html><head><title>A2C Portal</title>\n"
+  content += css+'</head>'
+  content += "<body><h3>A2C Portal</h3>"
+
+  return content
+
+def validate_token(config,token):
+  region = 'us-east-1'
+  user_record = {}
+  keys_url = 'https://cognito-idp.{}.amazonaws.com/{}/.well-known/jwks.json'.format(region, config['cognito_pool'])
+  response = urlopen(keys_url)
+  keys = json.loads(response.read())['keys']
+
+  headers = jwt.get_unverified_headers(token)
+  kid = headers['kid']
+  # search for the kid in the downloaded public keys
+  key_index = -1
+  for i in range(len(keys)):
+      if kid == keys[i]['kid']:
+          key_index = i
+          break
+  if key_index == -1:
+      log_error('Public key not found in jwks.json')
+      return False
+
+  # construct the public key
+  public_key = jwk.construct(keys[key_index])
+
+  # get the last two sections of the token,
+  # message and signature (encoded in base64)
+  message, encoded_signature = str(token).rsplit('.', 1)
+
+  # decode the signature
+  decoded_signature = base64url_decode(encoded_signature.encode('utf-8'))
+
+  # verify the signature
+  if not public_key.verify(message.encode("utf8"), decoded_signature):
+      log_error('Signature verification failed')
+      return 'False'
+
+  # since we passed the verification, we can now safely
+  # use the unverified claims
+  claims = jwt.get_unverified_claims(token)
+
+  log_error('Token claims = '+json.dumps(claims))
+
+  # additionally we can verify the token expiration
+  if time.time() > claims['exp']:
+      log_error('Token is expired')
+      return 'False'
+
+  if claims['aud'] != config['cognito_client_id']:
+      log_error('Token claims not valid for this application')
+      return 'False'
+  
+  user_record['username'] = claims['cognito:username']
+  user_record['token'] = token
+
+  return user_record
+
+def authenticate_user(config,authparams):
+  # Get cognito handle
+  cognito = boto3.client('cognito-idp')
+
+  message = authparams['USERNAME'] + config['cognito_client_id']
+  dig = hmac.new(key=bytes(config['cognito_client_secret_hash'],'UTF-8'),msg=message.encode('UTF-8'),digestmod=hashlib.sha256).digest()
+
+  authparams['SECRET_HASH'] = base64.b64encode(dig).decode()
+
+  log_error('Auth record = '+json.dumps(authparams))
+
+  # Initiate Authentication
+  try:
+    response = cognito.admin_initiate_auth(UserPoolId=config['cognito_pool'],
+                                 ClientId=config['cognito_client_id'],
+                                 AuthFlow='ADMIN_NO_SRP_AUTH',
+                                 AuthParameters=authparams)
+    log_error(json.dumps(response))
+  except ClientError as e:
+    log_error('Admin Initiate Auth failed: '+e.response['Error']['Message'])
+    return 'False'
+
+  return response['AuthenticationResult']['IdToken']
+
+def check_token(config,event):
+  token = 'False'
+  auth_record = {}
+  auth_record['token'] = 'False'
+  auth_record['username'] = 'False'
+
+  # Get jwt token
+  if 'headers' in event:
+    if event['headers'] != None:
+      if 'cookie' in event['headers']:
+        cookie = event['headers']['cookie']
+        cookie_name = cookie.split('=')[0]
+        if cookie_name == 'Token':
+          token = cookie.split('=')[1]
+          log_error('Got Token = '+token)
+          if token != 'False':
+            auth_record = validate_token(config,token)
+
+  return auth_record
+
+def print_form(athlete):
+  content = '<form method="post" action="">'
+  content += 'Enter Username: <input type="text" name="username"><p>\n'
+  content += 'Enter Password: <input type="password" name="password"><p>\n'
+  content += '<input type="hidden" name="athlete" value="+athlete+">\n'
+  content += '<input type="submit" name="Submit">'
+  content += '</form>'
+
+  return content
+
 def lambda_handler(event, context):
   token = False
   user_record = {}
   user_record['action'] = "Form"
+  athlete = False
 
   # Log the event object
   log_error("Event = "+json.dumps(event))
 
   # Get the environment from the context stage
-  environment = event['requestContext']['stage']
+  environment = "dev"
 
-  # Get username from query string, for now
-  if 'queryStringParameters' in event:
-    if 'athlete' in event['queryStringParameters']:
-      athlete = event['queryStringParameters']['athlete']
+  # look up the config data using environment
+  config = get_config_data(environment)
+  
+  content = start_html(config)
 
-  athlete_record = get_student_data(athlete)
-  log_error("Record = "+json.dumps(athlete_record))
+  auth_record = check_token(config,event)
 
-  content = '<table class="topTable">\n'
+  if auth_record['token'] == 'False':
+    # Check to see if they submitted the login form
+    if 'body' in event:
+      if event['body'] != None:
+        # Parse the post parameters
+        postparams = event['body']
+        postparams = base64.b64decode(bytes(postparams,'UTF-8')).decode('utf-8')
+        log_error('Got post params = '+postparams)
+        auth = {}
+        log_error('Parsing login form')
+        params = urllib.parse.parse_qs(postparams)
+        log_error("Params = "+str(params))
+        if 'username' in params:
+          log_error("Got username = "+params['username'][0])
+          auth['USERNAME'] = params['username'][0]
+        if 'password' in params:
+          log_error("Got password = "+params['password'][0])
+          auth['PASSWORD'] = params['password'][0]
+        if 'athlete' in params:
+          log_error("Got athlete = "+params['athlete'][0])
+          athlete = params['athlete'][0]
 
-  content += display_student_info(athlete_record)
+        if 'USERNAME' in auth:
+          token = authenticate_user(config,auth)
+          username = auth['USERNAME']
 
-  # End of table body and table
-  content += "</table>\n"
+          # Get user data
+          if username != False:
+            if athlete != False:
+              athlete = base64.b64decode(bytes(athlete,'UTF-8')).decode('utf-8')
+              athlete_record = get_student_data(athlete)
+              log_error("Record = "+json.dumps(athlete_record))
+              content += '<table class="topTable">\n'
+              content += display_student_info(athlete_record)
+              # End of table body and table
+              content += "</table>\n"
+          else:
+            content += print_form(athlete)
+  else:
+    token = auth_record['token']
+
+    if 'queryStringParameters' in event:
+      if event['queryStringParameters'] != None:
+        if 'athlete' in event['queryStringParameters']:
+          athlete = event['queryStringParameters']['athlete']
+
+          athlete_record = get_student_data(athlete)
+          log_error("Record = "+json.dumps(athlete_record))
+          content += '<table class="topTable">\n'
+          content += display_student_info(athlete_record)
+          # End of table body and table
+          content += "</table>\n"
 
   content += "</body></html>"
 
+  cookie = 'Token='+str(token)
   return { 'statusCode': 200,
            'headers': {
-              'Content-type': 'text/html'
+              'Content-type': 'text/html',
+              'Set-Cookie': cookie
            },
            'body': content
          }
