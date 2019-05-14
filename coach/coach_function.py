@@ -20,7 +20,7 @@ time.tzset()
 dynamodb = boto3.resource('dynamodb')
 
 # This information needs to move to paramater store
-table_name = "coach_info"
+table_name = "user_info"
 
 # Connect to dynamo db table
 t = dynamodb.Table(table_name)
@@ -186,7 +186,8 @@ def display_student_info(record):
 
   user_record += '    <tr><td class="header">ACT: </td><td class="data">'
   if 'act' in record:
-    user_record += record['act']
+    if record['act'] != None:
+      user_record += record['act']
   else:
     user_record += '&nbsp;'
   user_record += '    </td></tr>\n'
@@ -451,6 +452,7 @@ def lambda_handler(event, context):
         if 'athlete' in event['queryStringParameters']:
           athlete = event['queryStringParameters']['athlete']
 
+          log_error("Got athlete = "+athlete)
           athlete_record = get_student_data(athlete)
           log_error("Record = "+json.dumps(athlete_record))
           content += '<table class="topTable">\n'
