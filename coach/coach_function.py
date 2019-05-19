@@ -336,6 +336,7 @@ def validate_token(config,token):
 def authenticate_user(config,authparams):
   # Get cognito handle
   cognito = boto3.client('cognito-idp')
+  record = {}
 
   message = authparams['USERNAME'] + config['cognito_client_id']
   dig = hmac.new(key=bytes(config['cognito_client_secret_hash'],'UTF-8'),msg=message.encode('UTF-8'),digestmod=hashlib.sha256).digest()
@@ -351,11 +352,14 @@ def authenticate_user(config,authparams):
                                  AuthFlow='ADMIN_NO_SRP_AUTH',
                                  AuthParameters=authparams)
     log_error(json.dumps(response))
+    record['token'] = response['AuthenticationResult']['IdToken']
+    record['message'] = 'Success'
   except ClientError as e:
     log_error('Admin Initiate Auth failed: '+e.response['Error']['Message'])
-    return 'False'
+    record['token'] = 'False'
+    record['message'] = e.response['Error']['Message']
 
-  return response['AuthenticationResult']['IdToken']
+  return record
 
 def check_token(config,event):
   token = 'False'
@@ -381,7 +385,7 @@ def print_form(athlete):
   content = '<form method="post" action="">'
   content += 'Enter Username: <input type="text" name="username"><p>\n'
   content += 'Enter Password: <input type="password" name="password"><p>\n'
-  content += '<input type="hidden" name="athlete" value="+athlete+">\n'
+  content += '<input type="hidden" name="athlete" value="'+str(athlete)+'">\n'
   content += '<input type="submit" name="Submit">'
   content += '</form>'
 
@@ -406,10 +410,17 @@ def lambda_handler(event, context):
 
   auth_record = check_token(config,event)
 
+  if 'queryStringParameters' in event:
+      if event['queryStringParameters'] != None:
+        if 'athlete' in event['queryStringParameters']:
+          athlete = event['queryStringParameters']['athlete']
+          log_error("Got athlete = "+athlete)
+
   if auth_record['token'] == 'False':
     # Check to see if they submitted the login form
     if 'body' in event:
-      if event['body'] != None:
+      log_error('Raw POST params = "'+event['body']+'"')
+      if bool(event['body'] and event['body'].strip()):
         # Parse the post parameters
         postparams = event['body']
         postparams = base64.b64decode(bytes(postparams,'UTF-8')).decode('utf-8')
@@ -429,12 +440,13 @@ def lambda_handler(event, context):
           athlete = params['athlete'][0]
 
         if 'USERNAME' in auth:
-          token = authenticate_user(config,auth)
-          username = auth['USERNAME']
-
-          # Get user data
-          if username != False:
-            if athlete != False:
+          auth_record = authenticate_user(config,auth)
+          if auth_record['token'] == 'False':
+            content += '<h4>'+auth_record['message']+'</h4>'
+            content += '<p>Please authenticate again</p>'
+            content += print_form(athlete)
+          else:
+            if athlete != "False" and athlete != False:
               athlete = base64.b64decode(bytes(athlete,'UTF-8')).decode('utf-8')
               athlete_record = get_student_data(athlete)
               log_error("Record = "+json.dumps(athlete_record))
@@ -442,23 +454,19 @@ def lambda_handler(event, context):
               content += display_student_info(athlete_record)
               # End of table body and table
               content += "</table>\n"
-          else:
-            content += print_form(athlete)
+            else:
+              content += "<h4>Incorrect URL, please try again</h4>\n"
+      else:
+        content += print_form(athlete) 
   else:
     token = auth_record['token']
 
-    if 'queryStringParameters' in event:
-      if event['queryStringParameters'] != None:
-        if 'athlete' in event['queryStringParameters']:
-          athlete = event['queryStringParameters']['athlete']
-
-          log_error("Got athlete = "+athlete)
-          athlete_record = get_student_data(athlete)
-          log_error("Record = "+json.dumps(athlete_record))
-          content += '<table class="topTable">\n'
-          content += display_student_info(athlete_record)
-          # End of table body and table
-          content += "</table>\n"
+    athlete_record = get_student_data(athlete)
+    log_error("Record = "+json.dumps(athlete_record))
+    content += '<table class="topTable">\n'
+    content += display_student_info(athlete_record)
+    # End of table body and table
+    content += "</table>\n"
 
   content += "</body></html>"
 
